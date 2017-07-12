@@ -4,14 +4,16 @@ require("dotenv").config();
 const express = require("express");
 const app = express();
 const fs = require("fs");
-const path = require('path');
+const path = require("path");
 
 const QUANDL_API_KEY = process.env.QUANDL_API_KEY;
 const baseUrl = `https://www.quandl.com/api/v3/datatables/WIKI/PRICES.json?api_key=${QUANDL_API_KEY}&qopts.columns=ticker,date,close`;
 
 app.set("port", process.env.PORT || 3001);
 
-app.use(express.static(path.resolve(__dirname, 'client/build')));
+if (process.env.NODE_ENV === "production") {
+  app.use(express.static(path.resolve(__dirname, "client/build")));
+}
 
 const checkStatus = response => {
   if (!response.ok) {
@@ -23,8 +25,8 @@ const checkStatus = response => {
   return response;
 };
 
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '/client/build', 'index.html'));
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "/client/build", "index.html"));
 });
 
 const {
@@ -34,48 +36,51 @@ const {
   parseAPIResults
 } = require("./helpers");
 
-app.get("/api/stocks", (req, res, next) => {
-  console.log("Requesting search data from Quandl...");
-  if (!req.query.date) {
-    res
-      .status(400)
-      .json({ Error: "You must include a date query with every request." });
-  } else if (!isValidDate(req.query.date)) {
-    res.status(400).json({
-      Error: "Date must be formatted in the following manner: YYYY-MM-DD"
-    });
-  } else {
-    next();
+app.get(
+  "/api/stocks",
+  (req, res, next) => {
+    console.log("Requesting search data from Quandl...");
+    if (!req.query.date) {
+      res
+        .status(400)
+        .json({ Error: "You must include a date query with every request." });
+    } else if (!isValidDate(req.query.date)) {
+      res.status(400).json({
+        Error: "Date must be formatted in the following manner: YYYY-MM-DD"
+      });
+    } else {
+      next();
+    }
+  },
+  (req, res, next) => {
+    let symbols;
+    let symbolsString = "";
+    if (req.query.symbols) {
+      symbols = parseSymbols(req.query.symbols);
+      symbolsString = `&ticker=${symbols.toString()}`;
+    }
+    let endDate = req.query.date;
+    let startDate = determineStartDate(endDate);
+    fetch(
+      `${baseUrl}${symbolsString}&date.lte=${endDate}&date.gte=${startDate}`
+    )
+      .then(checkStatus)
+      .then(response => response.json())
+      .then(json => {
+        let results = parseAPIResults(json.datatable.data, endDate, symbols);
+        res.json(results);
+      })
+      .catch(error => {
+        next(error);
+      });
   }
-}, (req, res, next) => {
-  let symbols;
-  let symbolsString = "";
-  if (req.query.symbols) {
-    symbols = parseSymbols(req.query.symbols);
-    symbolsString = `&ticker=${symbols.toString()}`;
-  }
-  let endDate = req.query.date;
-  let startDate = determineStartDate(endDate);
-  fetch(
-    `${baseUrl}${symbolsString}&date.lte=${endDate}&date.gte=${startDate}`
-  )
-    .then(checkStatus)
-    .then(response => response.json())
-    .then(json => {
-      let results = parseAPIResults(json.datatable.data, endDate, symbols);
-      res.json(results);
-    })
-    .catch(error => {
-      next(error);
-    });
-});
+);
 
 const errorHandler = (err, req, res, next) => {
   console.error(`Error: ${err.stack}`);
   res.status(err.response ? err.response.status : 500);
   res.json({ error: err.message });
 };
-
 
 app.use(errorHandler);
 
